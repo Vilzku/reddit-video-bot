@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const { Client, GatewayIntentBits } = require('discord.js');
 const axios = require('axios');
+const mpdParser = require('mpd-parser');
 
 const client = new Client({
   intents: [
@@ -11,13 +12,13 @@ const client = new Client({
   ],
 });
 
-client.on('ready', () => {
+client.on('ready', async () => {
   console.log('Up and running :)');
 });
 
-const getVideoUrl = async (url) => {
+const getVideoURL = async (baseUrl) => {
   try {
-    const mainPageRes = await axios.get(url);
+    const mainPageRes = await axios.get(baseUrl);
     const landingUrl = mainPageRes.request.res.responseUrl;
     const paramStartIndex = landingUrl.indexOf('/?');
     const realUrl = landingUrl.slice(0, paramStartIndex);
@@ -34,12 +35,37 @@ const getVideoUrl = async (url) => {
   }
 };
 
+const getAudioURL = async (videoUrl) => {
+  try {
+    const splitIndex = videoUrl.lastIndexOf('/');
+    const baseURL = videoUrl.slice(0, splitIndex);
+    const res = await axios.get(baseURL + '/DASHPlaylist.mpd');
+    const parsedManifest = mpdParser.parse(res.data);
+    const audioURI =
+      parsedManifest.mediaGroups.AUDIO.audio.main.playlists.slice(-1)[0]
+        .resolvedUri;
+    return baseURL + audioURI;
+  } catch {
+    return null;
+  }
+};
+
+const createVideo = async (url) => {
+  const videoURL = await getVideoURL(url);
+  if (!videoURL) return null;
+  const audioURL = await getAudioURL(videoURL);
+  if (!audioURL) return null;
+  return videoURL;
+};
+
 client.on('messageCreate', (message) => {
   try {
     const msgParts = message.content.split(' ');
     msgParts.forEach((str) => {
       if (str.includes('reddit.com/r')) {
-        getVideoUrl(str).then((url) => url && message.channel.send(url));
+        createVideo(str).then((url) =>
+          url ? message.channel.send(url) : message.react('❌')
+        );
       }
     });
   } catch {}
